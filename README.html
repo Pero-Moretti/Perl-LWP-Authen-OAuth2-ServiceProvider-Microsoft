@@ -1,0 +1,210 @@
+<?xml version="1.0" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>LWP::Authen::OAuth2::ServiceProvider::Microsoft - Microsoft Azure AD (login.microsoftonline.com) authentication with OAuth2</title>
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<link rev="made" href="mailto:root@localhost" />
+</head>
+
+<body>
+
+
+
+<ul id="index">
+  <li><a href="#NAME">NAME</a></li>
+  <li><a href="#VERSION">VERSION</a></li>
+  <li><a href="#SYNOPSIS">SYNOPSIS</a></li>
+  <li><a href="#INSTALLATION">INSTALLATION</a></li>
+  <li><a href="#USAGE">USAGE</a>
+    <ul>
+      <li><a href="#EXAMPLES">EXAMPLES</a>
+        <ul>
+          <li><a href="#Adding-authentication-to-a-web-app">Adding authentication to a web app</a></li>
+          <li><a href="#Adding-authentication-to-a-command-line-script">Adding authentication to a command line script</a></li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li><a href="#AUTHORS">AUTHORS</a></li>
+  <li><a href="#COPYRIGHT-AND-LICENSE">COPYRIGHT AND LICENSE</a></li>
+</ul>
+
+<h1 id="NAME">NAME</h1>
+
+<p>LWP::Authen::OAuth2::ServiceProvider::Microsoft - Microsoft Azure AD (login.microsoftonline.com) authentication with OAuth2</p>
+
+<h1 id="VERSION">VERSION</h1>
+
+<p>Version v0.0.0</p>
+
+<h1 id="SYNOPSIS">SYNOPSIS</h1>
+
+<p>Authentication module for Microsoft&#39;s OAuth2 backend to Azure. There a lot of documentation on Microsoft&#39;s websites, but good luck...</p>
+
+<p>Probably the best place to start is https://docs.microsoft.com/en-us/azure/active-directory/develop/reference-v2-libraries, which has many implemented libraries (none in perl) to look through.</p>
+
+<p>This module ONLY deals with the authentication; in order to query the resulting tokens for the details of who logged in, you&#39;ll need to implement some more code (see EXAMPLES below).</p>
+
+<h1 id="INSTALLATION">INSTALLATION</h1>
+
+<p><code>cpan install LWP::Authen::OAuth2::ServiceProvider::Microsoft</code></p>
+
+<h1 id="USAGE">USAGE</h1>
+
+<p>In order to use this module you&#39;ll need the following information for your Azure AD:</p>
+
+<ul>
+
+<li><p><b>Your tenant ID</b>. Also known as Directory ID in Azure. This is used as part of the authentication URL: https://login.microsoftonline.com/&lt;tenant&gt;/oauth2/authorize</p>
+
+</li>
+<li><p><b>Your client ID</b>. Also known as application ID in Azure.</p>
+
+</li>
+<li><p><b>Your client Secret</b>, created from the &quot;client credentials&quot; section of the Application overview</p>
+
+</li>
+<li><p><b>A return URI</b>. This needs to be registered with Microsoft - you can&#39;t return to an arbitrary place.</p>
+
+</li>
+<li><p>Optionally you&#39;ll need to define the scopes required by the authentication token; this is required when you intend to actually do something with the token, such as access account information, emails, sharepoint etc. through the Microsoft Graph API.</p>
+
+</li>
+</ul>
+
+<p>The &quot;prompt&quot; parameter is also supported:</p>
+
+<pre><code>  my $oauth2 = LWP::Authen::OAuth2-&gt;new(
+    ...
+    prompt =&gt; &quot;login&quot;,  # Add this to new(...) to force Microsoft to show the log in prompt, even if the user is already logged in
+  );</code></pre>
+
+<h2 id="EXAMPLES">EXAMPLES</h2>
+
+<h3 id="Adding-authentication-to-a-web-app">Adding authentication to a web app</h3>
+
+<p>The following example is called &quot;auth.cgi&quot;, stored in a local machine document root accessed with <code>http://localhost/auth.cgi</code>.</p>
+
+<pre><code>  #!/usr/bin/perl
+
+  use LWP::Authen::OAuth2;
+  use CGI;
+  use JSON;
+  use MIME::Base64;
+
+  my $cgi = new CGI;
+  my $code = $cgi-&gt;param(&#39;code&#39;);
+
+  # Create the OAuth2 object
+  my $oauth2 = LWP::Authen::OAuth2-&gt;new(
+    client_id =&gt; &#39;(your-client-id)&#39;,
+    client_secret =&gt; &#39;(your-client-secret)&#39;,
+    tenant =&gt; &#39;(your-tenant)&#39;,
+    service_provider =&gt; &quot;Microsoft&quot;,
+    redirect_uri =&gt; &quot;http://localhost/auth.cgi&quot;,
+    scope =&gt; &quot;User.Read User.ReadBasic.All Files.Read.All&quot;,
+  );
+
+  # Check to see if we&#39;re returning from the authentication. If so,
+  # CGI parameter &quot;code&quot; will be provided. If there&#39;s no &quot;code&quot;
+  # we&#39;ll redirect the web browser to the authentication URL
+  if (!$code) {
+    my $url = $oauth2-&gt;authorization_url();
+    print &quot;Location: $url\n\n&quot;;
+    exit;
+  }
+
+  # We have a code! Great! Let&#39;s continue...
+  $oauth2-&gt;request_tokens(code =&gt; $code);
+
+  my $complete = $oauth2-&gt;token_string;
+  my $tokendata = {};
+  eval {
+    $tokendata = decode_json($complete);
+  };
+  if ($@ || !defined $tokendata-&gt;{id_token}) { die &quot;Token isn&#39;t the expected JSON object\n$complete&quot;; }
+  # Microsoft returns some information about the user in the token
+  my @seg = split(/\./, $tokendata-&gt;{id_token});
+  my $dec = decode_base64($seg[1]);
+  my $userdata = {};
+  eval {
+    $userdata = decode_json($dec);
+  };
+  if ($@) { die &quot;Couldn&#39;t decode user data from the token&quot;; }
+
+  # Do something meaningful with $userdata hashref, redirect the browser to another page
+  # For this example, we&#39;ll just print who logged in
+  print &quot;Content-type: text/plain\n\n&quot;;
+  print &quot;Logged in user: $userdata-&gt;{unique_name}\n&quot;;</code></pre>
+
+<h3 id="Adding-authentication-to-a-command-line-script">Adding authentication to a command line script</h3>
+
+<p>The following example is for a perl script run on a command line that requires authentication via a web browser. Note in particular that the redirect_uri is different; this must also be added to your Application Redirect URIs list, but I don&#39;t need a web server.</p>
+
+<pre><code>  #!/usr/bin/perl
+
+  use LWP::Authen::OAuth2;
+  use JSON;
+  use MIME::Base64;
+
+  my $oauth2 = LWP::Authen::OAuth2-&gt;new(
+    client_id =&gt; &#39;(your-client-id)&#39;,
+    client_secret =&gt; &#39;(your-client-secret)&#39;,
+    tenant =&gt; &#39;(your-tenant)&#39;,
+    service_provider =&gt; &quot;Microsoft&quot;,
+    redirect_uri =&gt; &quot;https://login.microsoftonline.com/common/oauth2/nativeclient&quot;,
+    scope =&gt; &quot;User.Read&quot;
+  );
+
+  print &quot;1. Copy and paste this URL into a web browser.\n&quot;;
+  print $oauth2-&gt;authorization_url();
+  print &quot;\n\n2. Once you&#39;ve logged in, copy and paste the URL from your web browser back here.\nEnter URL returned: &quot;;
+  my $url = &lt;STDIN&gt;;
+  my ($code) = $url =~ /code=([^&amp;]+)/;
+  if (!$code) {
+    die &quot;Error: Couldn&#39;t find the code in the response URL\n&quot;;
+  }
+
+  # We have a code! Great! Let&#39;s continue...
+  $oauth2-&gt;request_tokens(code =&gt; $code);
+
+  my $complete = $oauth2-&gt;token_string;
+  my $tokendata = {};
+  eval {
+    $tokendata = decode_json($complete);
+  };
+  if ($@ || !defined $tokendata-&gt;{id_token}) { die &quot;Token isn&#39;t the expected JSON object\n$complete&quot;; }
+  # Microsoft returns some information about the user in the token
+  my @seg = split(/\./, $tokendata-&gt;{id_token});
+  my $dec = decode_base64($seg[1]);
+  my $userdata = {};
+  eval {
+    $userdata = decode_json($dec);
+  };
+  if ($@) { die &quot;Couldn&#39;t decode user data from the token&quot;; }
+
+  # Do something meaningful with $userdata hashref
+  print &quot;Logged in user was $userdata-&gt;{unique_name}\n&quot;;</code></pre>
+
+<h1 id="AUTHORS">AUTHORS</h1>
+
+<ul>
+
+<li><p>Pero Moretti &lt;pero.g.moretti at gmail.com&gt;</p>
+
+</li>
+</ul>
+
+<h1 id="COPYRIGHT-AND-LICENSE">COPYRIGHT AND LICENSE</h1>
+
+<p>This software is (c) 2022 by Pero Moretti.</p>
+
+<p>This is free software licensed under FreeBSD. Please see the LICENSE file for more information.</p>
+
+
+</body>
+
+</html>
+
+
